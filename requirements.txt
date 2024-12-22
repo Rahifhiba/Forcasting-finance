@@ -1,0 +1,6 @@
+dask==2024.12.1
+matplotlib==3.10.0
+numpy==2.2.0
+pandas==2.2.3
+plotly==5.24.1
+yfinance==0.2.51
