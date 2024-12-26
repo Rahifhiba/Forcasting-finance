@@ -17,35 +17,52 @@ def load_model_and_scaler(stock):
 
 # Function to make predictions
 def make_prediction(model, scaler, data, n_predictions):
-  data_scaled = scaler.transform(data)
-  data_scaled = np.array(data_scaled).reshape((1, data_scaled.shape[0], 1))
-  predictions = []
-  for _ in range(n_predictions):
-    prediction = model.predict(data_scaled)
-    prediction = scaler.inverse_transform(prediction)
-    predictions.append(prediction[0][0])
-    data_scaled = np.append(data_scaled, prediction, axis=0)
-  return predictions
+    data_scaled = scaler.transform(data)
+    data_scaled = np.array(data_scaled).reshape((1, data_scaled.shape[0], 1))
+    predictions = []
+    for _ in range(n_predictions):
+        prediction = model.predict(data_scaled)
+        prediction = scaler.inverse_transform(prediction)
+        prediction = prediction.reshape(1, 1)  # Flatten prediction
+        predictions.append(prediction[0][0])
+
+        # Keep only the last timestep
+        data_scaled = np.append(data_scaled[:, 1:, :], prediction.reshape(1, 1, 1), axis=1)
+    return predictions
+
 
 # Function to plot the data
-def plot_data(df, predictions, stock):
-  fig = go.Figure()
+def plot_data(df, predictions, stock, future_dates):
+    fig = go.Figure()
 
-  # Add actual closing prices
-  fig.add_trace(go.Scatter(x=df['Date'], y=df['Close'], mode='lines', name='Actual Prices', line=dict(color='blue')))
+    # Add actual historical closing prices
+    fig.add_trace(go.Scatter(
+        x=df['Date'],
+        y=df['Close'],
+        mode='lines',
+        name='Actual Prices',
+        line=dict(color='blue')
+    ))
 
-  # Add predicted closing prices
-  fig.add_trace(go.Scatter(x=df.iloc[-n_predictions:]['Date'], y=predictions, mode='lines', name='Predicted Prices', line=dict(color='red', dash='dot')))
+    # Add predicted closing prices for future dates
+    fig.add_trace(go.Scatter(
+        x=future_dates,
+        y=predictions,
+        mode='lines',
+        name='Predicted Prices',
+        line=dict(color='green', dash='dot')
+    ))
 
-  fig.update_layout(
-      title=f"LSTM Predictions for {stock}",
-      xaxis_title="Date",
-      yaxis_title="Closing Prices",
-      height=500,
-      margin=dict(t=50, b=50)
-  )
+    fig.update_layout(
+        title=f"LSTM Predictions for {stock}",
+        xaxis_title="Date",
+        yaxis_title="Closing Prices",
+        height=500,
+        margin=dict(t=50, b=50)
+    )
 
-  st.plotly_chart(fig)
+    st.plotly_chart(fig)
+
 
 # Streamlit app
 st.title("Stock Price Prediction App")
@@ -71,22 +88,23 @@ yesterday = today - timedelta(days=1)
 
 # Make prediction
 if st.button("Predict"):
-  # Fetch data for the selected stock
-  df = yf.download(tickers_names[stock], start='2020-01-01', end=yesterday)
+    # Fetch data for the selected stock
+    df = yf.download(tickers_names[stock], start='2020-01-01', end=yesterday)
+    df.columns = [c[0] for c in df.columns]
+    df = df.reset_index()
+    st.success("✔ Data downloaded successfully!")
+    if df.empty:
+        st.error("⚠ No data available for the selected date. Please try a different date.")
+    else:
+        df = df.reset_index()
+        data = df[['Close']].values
+        n_predictions = 7  # Number of days to predict
 
-  if df.empty:
-      st.error("⚠ No data available for the selected date. Please try a different date.")
-  else:
-      df = df.reset_index()
-      data = df[['Close']].values
-      n_predictions = 7  # Number of days to predict
+        predictions = make_prediction(model, scaler, data, n_predictions)
+        future_dates = [today + timedelta(days=i) for i in range(n_predictions)]
 
-      predictions = make_prediction(model, scaler, data, n_predictions)
-      future_dates = [today + timedelta(days=i) for i in range(n_predictions)]
-      df_temp = pd.DataFrame({'Date': future_dates, 'Close': predictions})
-      df = pd.concat([df, df_temp])
+        st.write(f"Dataset for {stock}")
+        st.dataframe(df)
 
-      st.write(f"Predicted closing prices for {stock} for the next 7 days:")
-      st.dataframe(df[['Date', 'Close']].tail(n_predictions))
-
-      plot_data(df, predictions, stock)
+        # Plot the actual data and predictions
+        plot_data(df, predictions, stock, future_dates)
