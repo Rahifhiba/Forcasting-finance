@@ -4,5 +4,3 @@ plotly
 yfinance
 scikit-learn
 streamlit
-sklearn
-torch
