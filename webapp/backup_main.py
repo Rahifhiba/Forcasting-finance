@@ -1,78 +1,113 @@
 import streamlit as st
 import pandas as pd
-import plotly.express as px
 import numpy as np
-import yfinance as yf
-import tensorflow as tf
 import joblib
+import tensorflow as tf
+import yfinance as yf
+from sklearn.preprocessing import MinMaxScaler
+from datetime import date, timedelta
+import plotly.graph_objects as go
+import plotly.express as px
+import os
 
-st.title("Forecasting: Stock Prediction")
+TF_ENABLE_ONEDNN_OPTS = 0
 
-# Load the model and scaler
-model = tf.keras.models.load_model("models/apple_model.keras")
-scaler_apple = joblib.load("models/scaler_apple_model.pkl")
+# Function to load the model and scaler
+@st.cache_resource
+def load_model_and_scaler(stock):
+    model = tf.keras.models.load_model(f'models/{stock}_model.keras')
+    scaler = joblib.load(f'models/scaler_{stock}.pkl')
+    print("+++++++++++++++++++++", os.path.basename(f'models/scaler_{stock}.pkl'))
+    return model, scaler
 
-# Define ticker names and their respective symbols
-tickers_names = {
-    "Apple Inc.": "AAPL",
-    "Xiaomi Corporation": "1810.HK",
-    "NVIDIA Corporation": "NVDA",
-    "Alphabet Inc.": "GOOG",
-    "Amazon.com Inc.": "AMZN",
-    "Samsung Electronics": "005930.KS",
-}
+# Function to prepare the data (reshaping for LSTM)
+def prepare_data_for_lstm(data, scaler, time_step=60):
+    data_scaled = scaler.transform(data['Close'].values.reshape(-1, 1))
+    x_data, y_data = [], []
 
-# User selects a ticker
-selected_ticker_name = st.selectbox("Select a stock for prediction:", tickers_names.keys())
-selected_ticker = tickers_names[selected_ticker_name]
+    for i in range(time_step, len(data_scaled)):
+        x_data.append(data_scaled[i-time_step:i, 0])
+        y_data.append(data_scaled[i, 0])
 
-# Download data using yfinance
-try:
-    st.write(f"Downloading data for {selected_ticker_name} ({selected_ticker})...")
-    data = yf.download(selected_ticker, start="2020-01-01", end="2023-12-31")
-    data.columns = [c[0] for c in data.columns]
+    x_data = np.array(x_data)
+    y_data = np.array(y_data)
 
-    data = data.reset_index()
-    st.success("✔ Data downloaded successfully!")
-except Exception as e:
-    st.error(f"Error downloading data: {e}")
-    data = None
+    # Reshaping to 3D array for LSTM (samples, time steps, features)
+    x_data = x_data.reshape(x_data.shape[0], x_data.shape[1], 1)
 
-if data is not None:
-    st.subheader(f"Uploaded Data {selected_ticker_name} Preview")
-    st.write(data.head())
-    st.write("Preprocessing data for forecasting...")
-    scaled_data = scaler_apple.transform(data['Close'].values.reshape(-1, 1))
+    return x_data, y_data, data_scaled
 
-    # Get user-defined prediction horizon
-    forecast_horizon = st.slider("Select prediction horizon (days):", 1, 30, 7)
+# Function to make predictions
+def make_predictions(data, model, scaler, days=7, time_step=60):
+    # Prepare the data for LSTM
+    x_data, _, data_scaled = prepare_data_for_lstm(data, scaler, time_step)
 
-    # Generate predictions
+    # Use the last time_step data points for prediction
+    last_sequence = x_data[-1].reshape(1, time_step, 1)
+
+    # Predict future values
     predictions = []
-    input_data = scaled_data[-1].reshape(1, -1)  # Ensure input_data has the right shape
-    for _ in range(forecast_horizon):
-        next_prediction = model.predict(input_data)
-        predictions.append(next_prediction[0, 0])  # Collect prediction
-        # Update input data with the new prediction
-        input_data = np.append(input_data[:, 1:], next_prediction, axis=-1).reshape(1, -1)
+    for i in range(days):
+        next_pred = model.predict(last_sequence)
+        predictions.append(next_pred[0][0])
 
-    # Inverse transform predictions back to original scale
-    predictions = scaler_apple.inverse_transform(np.array(predictions).reshape(-1, 1)).flatten()
+        # Append the predicted value to the sequence for the next prediction
+        last_sequence = np.append(last_sequence[:, 1:, :], next_pred.reshape(1, 1, 1), axis=1)
 
-    # Prepare forecast dataframe
-    future_dates = pd.date_range(start=data['Date'].iloc[-1], periods=forecast_horizon + 1)[1:]
-    forecast_df = pd.DataFrame({"Date": future_dates, "Forecast": predictions})
+    # Reverse the scaling for predictions
+    predictions = scaler.inverse_transform(np.array(predictions).reshape(-1, 1))
+    return predictions
 
-    # Plot forecast results
-    st.subheader(f"{selected_ticker_name} Forecast for the Next {forecast_horizon} Days")
-    fig = px.line(
-        x=forecast_df["Date"],
-        y=forecast_df["Forecast"],
-        labels={"x": "Date", "y": "Price"},
-        title=f"Forecast for {selected_ticker_name}",
-    )
+def plot_data(actual, predicted):
+    fig = px.line(title='Actual vs Predicted Prices')
+    fig.add_scatter(x=actual['Date'], y=actual['Close'], mode='lines', name='Actual Data')
+
+    # Check if actual DataFrame is empty
+    if actual.empty:
+        st.error("⚠ No actual data available to plot.")
+        return
+
+    # Use iloc to safely access the last date
+    last_date = actual['Date'].iloc[-1]
+
+    # Generate future dates based on the last date
+    future_dates = [last_date + timedelta(days=i+1) for i in range(len(predicted))]
+
+    fig.add_scatter(x=future_dates, y=predicted.flatten(), mode='lines', name='Predictions')
     st.plotly_chart(fig)
 
-    # Show forecast dataframe
-    st.write("Forecasted Prices:")
-    st.write(forecast_df)
+# Streamlit app
+st.title("Stock Price Prediction App")
+st.write("Choose a stock and see the predicted closing price for the next 7 days!")
+
+# Select stock
+tickers_names = {
+  "Apple Inc.": ("AAPL", "apple"),
+  "Xiaomi Corporation": ("1810.HK", "xiaomi"),
+  "NVIDIA Corporation": ("NVDA", "nvidia"),
+  "Alphabet Inc.": ("GOOG", "google"),
+  "Amazon.com Inc.": ("AMZN", "amazon"),
+  "Samsung Electronics": ("005930.KS","samsung")
+}
+stock = st.selectbox("Select stock", tickers_names.keys())
+
+# Load model and scaler
+model, scaler = load_model_and_scaler(tickers_names[stock][1])
+
+# Date inputs for prediction
+today = date.today()
+yesterday = today - timedelta(days=1)
+
+# Make prediction
+if st.button("Predict"):
+    # Fetch data for the selected stock
+    df = yf.download(tickers_names[stock][0], start='2020-01-01', end=yesterday)
+    df.columns = [c[0] for c in df.columns]
+    df = df.reset_index()
+
+    st.success("✔ Data downloaded successfully!")
+    if df.empty:
+        st.error("⚠ No data available for the selected date. Please try a different date.")
+    else:
+        predictions = make_predictions(df, model, scaler)
+        plot_data(df, predictions)
