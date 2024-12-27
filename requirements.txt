@@ -1,9 +1,8 @@
-dask==2024.12.1
-numpy==2.2.0
-pandas==2.2.3
-plotly==5.24.1
-yfinance==0.2.51
-scikit-learn==1.6.0
-streamlit==1.40.2
-sklearn==1.6.0
-torch==2.5.1
+numpy
+pandas
+plotly
+yfinance
+scikit-learn
+streamlit
+sklearn
+torch
