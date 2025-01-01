@@ -37,7 +37,7 @@ def prepare_data_for_lstm(data, scaler, time_step=60):
     return x_data, y_data, data_scaled
 
 
-def make_predictions(data, model, scaler, days=7):
+def make_predictions(data, model, scaler, days=3):
     """prediction"""
     data = np.array(data['Close']).reshape(-1, 1)
     data_scaled = scaler.transform(data)

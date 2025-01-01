@@ -12,16 +12,16 @@ import os
 
 TF_ENABLE_ONEDNN_OPTS = 0
 
-# Function to load the model and scaler
 @st.cache_resource
 def load_model_and_scaler(stock):
+    """load the model and scaler"""
     model = tf.keras.models.load_model(f'models/{stock}_model.keras')
     scaler = joblib.load(f'models/scaler_{stock}.pkl')
     print("+++++++++++++++++++++", os.path.basename(f'models/scaler_{stock}.pkl'))
     return model, scaler
 
-# Function to prepare the data (reshaping for LSTM)
 def prepare_data_for_lstm(data, scaler, time_step=60):
+    """prepare the data (reshaping for LSTM)"""
     data_scaled = scaler.transform(data['Close'].values.reshape(-1, 1))
     x_data, y_data = [], []
 
@@ -32,29 +32,24 @@ def prepare_data_for_lstm(data, scaler, time_step=60):
     x_data = np.array(x_data)
     y_data = np.array(y_data)
 
-    # Reshaping to 3D array for LSTM (samples, time steps, features)
     x_data = x_data.reshape(x_data.shape[0], x_data.shape[1], 1)
 
     return x_data, y_data, data_scaled
 
-# Function to make predictions
-def make_predictions(data, model, scaler, days=7, time_step=60):
-    # Prepare the data for LSTM
-    x_data, _, data_scaled = prepare_data_for_lstm(data, scaler, time_step)
 
-    # Use the last time_step data points for prediction
-    last_sequence = x_data[-1].reshape(1, time_step, 1)
+def make_predictions(data, model, scaler, days=7):
+    """prediction"""
+    data = np.array(data['Close']).reshape(-1, 1)
+    data_scaled = scaler.transform(data)
 
-    # Predict future values
     predictions = []
+
+    last_sequence = data_scaled[-1].reshape(1, 1, 1)
     for i in range(days):
         next_pred = model.predict(last_sequence)
         predictions.append(next_pred[0][0])
-
-        # Append the predicted value to the sequence for the next prediction
         last_sequence = np.append(last_sequence[:, 1:, :], next_pred.reshape(1, 1, 1), axis=1)
 
-    # Reverse the scaling for predictions
     predictions = scaler.inverse_transform(np.array(predictions).reshape(-1, 1))
     return predictions
 
@@ -62,25 +57,21 @@ def plot_data(actual, predicted):
     fig = px.line(title='Actual vs Predicted Prices')
     fig.add_scatter(x=actual['Date'], y=actual['Close'], mode='lines', name='Actual Data')
 
-    # Check if actual DataFrame is empty
     if actual.empty:
         st.error("⚠ No actual data available to plot.")
         return
 
-    # Use iloc to safely access the last date
     last_date = actual['Date'].iloc[-1]
 
-    # Generate future dates based on the last date
     future_dates = [last_date + timedelta(days=i+1) for i in range(len(predicted))]
 
     fig.add_scatter(x=future_dates, y=predicted.flatten(), mode='lines', name='Predictions')
     st.plotly_chart(fig)
 
-# Streamlit app
+
 st.title("Stock Price Prediction App")
 st.write("Choose a stock and see the predicted closing price for the next 7 days!")
 
-# Select stock
 tickers_names = {
   "Apple Inc.": ("AAPL", "apple"),
   "Xiaomi Corporation": ("1810.HK", "xiaomi"),
@@ -91,16 +82,12 @@ tickers_names = {
 }
 stock = st.selectbox("Select stock", tickers_names.keys())
 
-# Load model and scaler
 model, scaler = load_model_and_scaler(tickers_names[stock][1])
 
-# Date inputs for prediction
 today = date.today()
 yesterday = today - timedelta(days=1)
 
-# Make prediction
 if st.button("Predict"):
-    # Fetch data for the selected stock
     df = yf.download(tickers_names[stock][0], start='2020-01-01', end=yesterday)
     df.columns = [c[0] for c in df.columns]
     df = df.reset_index()
